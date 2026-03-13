@@ -52,19 +52,15 @@ extra:
       name: Discord
 
 markdown_extensions:
-  - abbr
   - admonition
   - attr_list
   - md_in_html
   - pymdownx.details
-  - pymdownx.highlight
   - pymdownx.inlinehilite
   - pymdownx.superfences
   - toc:
       permalink: true
       toc_depth: 3
-  - pymdownx.highlight:
-      linenums: true
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
