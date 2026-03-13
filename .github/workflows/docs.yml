@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - ".github/workflows/documentation.yml"
+      - ".github/workflows/docs.yml"
       - "docs/**"
       - "src/**"
       - "mkdocs.yml"
