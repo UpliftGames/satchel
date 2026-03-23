@@ -53,8 +53,6 @@ The Creator Store is the easiest way to install Satchel. It is a one-click insta
 
 1. In the [Explorer] window, insert **Satchel** into [`ReplicatedStorage`][ReplicatedStorage].
 
-    ![Contextual menu](https://prod.docsiteassets.roblox.com/assets/studio/explorer/Context-Menu-Service.png){ width="50%" }
-
 1. Select the **Satchel** model file you downloaded from GitHub.
 
   [GitHub Releases]: https://github.com/ryanlua/satchel/releases
