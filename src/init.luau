@@ -1,5 +1,6 @@
 --!nocheck
 --!nolint DeprecatedApi
+--cSpell:disable
 
 --[[
 	This Source Code Form is subject to the terms of the Mozilla Public
