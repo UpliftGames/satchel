@@ -405,7 +405,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 	-- Fill the slot with a tool
 	function slot:Fill(tool: Tool): ...any
 		-- Clear slot if it has no tool else assign the tool
-		if not tool then
+		if not tool or tool:HasTag("isHiddenFromSatchel") then
 			return self:Clear()
 		end
 
