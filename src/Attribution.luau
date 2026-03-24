@@ -20,7 +20,7 @@
 
 local RunService = game:GetService("RunService")
 
-if not RunService:IsStudio() then
+if not RunService:IsStudio() and RunService:IsClient() then
 	print("💼 Running Satchel v1.4.1 by @WinnersTakesAll")
 end
 
