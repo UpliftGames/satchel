@@ -8,6 +8,6 @@ version = "3.4.0"
 dependencies = []
 
 [[package]]
-name = "ryanlua/satchel"
-version = "1.4.1"
+name = "upliftgames/satchel"
+version = "1.6.0"
 dependencies = [["topbarplus", "1foreverhd/topbarplus@3.4.0"]]
