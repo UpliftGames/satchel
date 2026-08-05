@@ -143,7 +143,7 @@ local GAMEPAD_INPUT_TYPES: { [Enum.UserInputType]: boolean } =
 -- Topbar logic
 local BackpackEnabled: boolean = true
 
-local Icon: any = require(script.Parent.topbarplus)
+local Icon: any = require(game.ReplicatedStorage.SharedPackages.TopbarPlus)
 
 local inventoryIcon: any = Icon.new()
 	:setName("Inventory")
@@ -344,7 +344,10 @@ end
 
 local function UnequipAllTools(): () --NOTE: HopperBin
 	if Humanoid then
-		Humanoid:UnequipTools()
+		for _, tool in Character:QueryDescendants(">.satchelSlot") do
+			tool:SetAttribute("IsEquipped", nil)
+			tool.Parent = Backpack
+		end
 		if ActiveHopper then
 			DisableActiveHopper()
 		end
@@ -353,8 +356,8 @@ end
 
 local function EquipNewTool(tool: Tool): () --NOTE: HopperBin
 	UnequipAllTools()
-	Humanoid:EquipTool(tool) --NOTE: This would also unequip current Tool
-	--tool.Parent = Character --TODO: Switch back to above line after EquipTool is fixed!
+	tool:SetAttribute("IsEquipped", true)
+	tool.Parent = Character --TODO: Switch back to above line after EquipTool is fixed!
 end
 
 local function IsEquipped(tool: Tool): boolean
@@ -377,6 +380,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 	local ToolIcon: ImageLabel = nil
 	local ToolName: TextLabel = nil
 	local ToolChangeConn: any = nil
+	local ToolAttribChangeConn: any = nil
 	local HighlightFrame: any = nil -- UIStroke
 	local SelectionObj: ImageLabel = nil
 
@@ -413,7 +417,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 
 		-- Update the slot with tool data
 		local function assignToolData(): ()
-			local icon: string = tool.TextureId
+			local icon: string = tool:GetAttribute("TextureId") or ""
 			ToolIcon.Image = icon
 
 			if icon ~= "" then
@@ -423,7 +427,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 				ToolName.Visible = true
 			end
 
-			ToolName.Text = tool.Name
+			ToolName.Text = tool:GetAttribute("Title") or tool:GetAttribute("ToolName") or tool.Name
 
 			-- If there is a tooltip, then show it
 			if ToolTip and tool:IsA("Tool") then --NOTE: HopperBin
@@ -442,7 +446,19 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 
 		-- Update the slot with new tool data if the tool's properties changes
 		ToolChangeConn = tool.Changed:Connect(function(property: string): ()
-			if property == "TextureId" or property == "Name" or property == "ToolTip" then
+			if property == "Name" then
+				assignToolData()
+			end
+		end)
+
+		if ToolAttribChangeConn then
+			ToolAttribChangeConn:Disconnect()
+			ToolAttribChangeConn = nil
+		end
+
+		-- Update the slot with new tool data if the tool's properties changes
+		ToolAttribChangeConn = tool.AttributeChanged:Connect(function(property: string): ()
+			if property == "TextureId" or property == "ToolTip" or property == "Title" then
 				assignToolData()
 			end
 		end)
@@ -486,6 +502,11 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 		if ToolChangeConn then
 			ToolChangeConn:Disconnect()
 			ToolChangeConn = nil
+		end
+
+		if ToolAttribChangeConn then
+			ToolAttribChangeConn:Disconnect()
+			ToolAttribChangeConn = nil
 		end
 
 		ToolIcon.Image = ""
@@ -936,7 +957,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 end
 
 local function OnChildAdded(child: Instance): () -- To Character or Backpack
-	if not child:IsA("Tool") and not child:IsA("HopperBin") then --NOTE: HopperBin
+	if not child:HasTag("satchelSlot") then --NOTE: HopperBin
 		if child:IsA("Humanoid") and child.Parent == Character then
 			Humanoid = child
 		end
@@ -1003,7 +1024,7 @@ local function OnChildAdded(child: Instance): () -- To Character or Backpack
 end
 
 local function OnChildRemoved(child: Instance): () -- From Character or Backpack
-	if not child:IsA("Tool") and not child:IsA("HopperBin") then --NOTE: HopperBin
+	if not child:IsA("Tool") and not child:IsA("HopperBin") and not child:HasTag("satchelSlot") then --NOTE: HopperBin
 		return
 	end
 	local tool: Tool | any = child
@@ -1061,16 +1082,33 @@ local function OnCharacterAdded(character: Model): ()
 	Character = character
 	table.insert(CharConns, character.ChildRemoved:Connect(OnChildRemoved))
 	table.insert(CharConns, character.ChildAdded:Connect(OnChildAdded))
-	for _, child: Instance in pairs(character:GetChildren()) do
-		OnChildAdded(child)
+
+	local children = {}
+	for _, child in character:QueryDescendants(">.satchelSlot") do
+		table.insert(children, child)
 	end
-	--NOTE: Humanoid is set inside OnChildAdded
 
 	-- And the new backpack, when it gets here
 	Backpack = Player:WaitForChild("Backpack")
 	table.insert(CharConns, Backpack.ChildRemoved:Connect(OnChildRemoved))
 	table.insert(CharConns, Backpack.ChildAdded:Connect(OnChildAdded))
-	for _, child: Instance in pairs(Backpack:GetChildren()) do
+
+	for _, child in Backpack:QueryDescendants(">.satchelSlot") do
+		table.insert(children, child)
+	end
+
+	table.sort(children, function(a, b)
+		local aOrder = a:GetAttribute("InitialToolOrder") or math.huge
+		local bOrder = b:GetAttribute("InitialToolOrder") or math.huge
+
+		if aOrder ~= bOrder then
+			return aOrder < bOrder
+		end
+
+		return a.Name < b.Name
+	end)
+
+	for _, child in children do
 		OnChildAdded(child)
 	end
 
@@ -2142,6 +2180,24 @@ end
 -- Returns the BindableEvent for when the backpack state changes
 function BackpackScript:GetStateChangedEvent(): BindableEvent
 	return BackpackScript.StateChanged
+end
+
+-- Unequips all tools from the character
+function BackpackScript:UnequipAllTools(): ()
+	UnequipAllTools()
+end
+
+-- Get slots for tools
+function BackpackScript:GetSlotForTool(tool: Tool)
+	return SlotsByTool[tool]
+end
+
+-- Equip a slot for a tool
+function BackpackScript:EquipTool(tool: Tool): ()
+	local slot: any = SlotsByTool[tool]
+	if slot and not slot:IsEquipped() then
+		slot:Select()
+	end
 end
 
 -- Update every heartbeat the icon state
