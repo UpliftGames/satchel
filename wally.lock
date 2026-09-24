@@ -9,5 +9,5 @@ dependencies = []
 
 [[package]]
 name = "upliftgames/satchel"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [["topbarplus", "1foreverhd/topbarplus@3.4.0"]]

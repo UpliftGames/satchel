@@ -506,6 +506,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 		end
 
 		self.Tool = tool :: Tool
+		SlotsByTool[tool] = self -- Before UpdateEquipView below, so GetSlotForTool is current inside the decorator
 
 		AssignToolData() -- The decorator is notified by UpdateEquipView below
 
@@ -559,7 +560,6 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 			end
 		end
 
-		SlotsByTool[tool] = self
 		LowestEmptySlot = FindLowestEmpty()
 	end
 
@@ -588,8 +588,6 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 		end
 		SlotFrame.Draggable = false
 
-		self:UpdateEquipView(true) -- Show as unequipped
-
 		if self.Index <= NumberOfHotbarSlots then
 			FullHotbarSlots = FullHotbarSlots - 1
 			if FullHotbarSlots < 1 then
@@ -602,6 +600,8 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 		SlotsByTool[self.Tool] = nil
 		self.Tool = nil
 		LowestEmptySlot = FindLowestEmpty()
+
+		self:UpdateEquipView(true) -- Show as unequipped. After the tool is cleared, so the decorator sees an empty slot
 	end
 
 	function slot:UpdateEquipView(unequippedOverride: boolean?): ...any
