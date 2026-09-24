@@ -143,7 +143,7 @@ local GAMEPAD_INPUT_TYPES: { [Enum.UserInputType]: boolean } =
 -- Topbar logic
 local BackpackEnabled: boolean = true
 
-local Icon: any = require(game.ReplicatedStorage.SharedPackages.TopbarPlus)
+local Icon: any = require(script.Parent.topbarplus)
 
 local inventoryIcon: any = Icon.new()
 	:setName("Inventory")
@@ -364,6 +364,55 @@ local function IsEquipped(tool: Tool): boolean
 	return tool and tool.Parent == Character --NOTE: HopperBin
 end
 
+-- Slot decorator --
+
+export type SlotState = {
+	frame: TextButton, -- the slot's SlotFrame
+	tool: Tool?, -- nil when the slot is empty
+	isEquipped: boolean,
+	index: number, -- slot.Index
+	isHotbar: boolean, -- index <= NumberOfHotbarSlots
+}
+
+export type SlotDecorator = (state: SlotState) -> (() -> ())?
+
+-- When set, Satchel stops drawing the slot background, equip border, icon and name, and hands them to this
+local slotDecorator: SlotDecorator? = nil
+local DecoratorCleanups: { [any]: () -> () } = {} -- Map of Slots to the cleanup returned by their last decorate call
+
+local function runDecoratorCleanup(slot: any): ()
+	local cleanup: (() -> ())? = DecoratorCleanups[slot]
+	if cleanup then
+		DecoratorCleanups[slot] = nil
+		local ok: boolean, err: any = xpcall(cleanup, debug.traceback)
+		if not ok then
+			warn("[Satchel] Slot decorator cleanup errored:\n" .. tostring(err))
+		end
+	end
+end
+
+local function notifyDecorator(slot: any, isEquipped: boolean): ()
+	if not slotDecorator then
+		return
+	end
+
+	runDecoratorCleanup(slot)
+
+	local state: SlotState = {
+		frame = slot.Frame,
+		tool = slot.Tool,
+		isEquipped = isEquipped,
+		index = slot.Index,
+		isHotbar = slot.Index <= NumberOfHotbarSlots,
+	}
+	local ok: boolean, result: any = xpcall(slotDecorator, debug.traceback, state)
+	if not ok then
+		warn("[Satchel] Slot decorator errored:\n" .. tostring(result))
+	elseif type(result) == "function" then
+		DecoratorCleanups[slot] = result
+	end
+end
+
 -- Create a slot
 local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 	local index: number = initIndex or (#Slots + 1)
@@ -393,7 +442,50 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 	-- Update slot transparency
 	local function UpdateSlotFading(): ()
 		SlotFrame.SelectionImageObject = nil
-		SlotFrame.BackgroundTransparency = SlotFrame.Draggable and 0 or SLOT_LOCKED_TRANSPARENCY
+		if slotDecorator then
+			SlotFrame.BackgroundTransparency = 1
+		else
+			SlotFrame.BackgroundTransparency = SlotFrame.Draggable and 0 or SLOT_LOCKED_TRANSPARENCY
+		end
+	end
+
+	-- Update the slot with tool data
+	local function AssignToolData(): ()
+		local tool: Tool = slot.Tool
+		if not tool then
+			return
+		end
+
+		if slotDecorator then
+			ToolIcon.Visible = false
+			ToolName.Visible = false
+		else
+			local icon: string = tool:GetAttribute("TextureId") or ""
+			ToolIcon.Image = icon
+			ToolIcon.Visible = true
+
+			if icon ~= "" then
+				-- Enable the tool name on the slot if there is no icon
+				ToolName.Visible = false
+			else
+				ToolName.Visible = true
+			end
+		end
+
+		ToolName.Text = tool:GetAttribute("Title") or tool:GetAttribute("ToolName") or tool.Name
+
+		-- If there is a tooltip, then show it
+		if ToolTip and tool:IsA("Tool") then --NOTE: HopperBin
+			ToolTip.Text = tool.ToolTip
+			ToolTip.Size = UDim2.fromOffset(0, TOOLTIP_HEIGHT)
+			ToolTip.Position = UDim2.new(0.5, 0, 0, TOOLTIP_OFFSET)
+		end
+	end
+
+	-- Tool data changed while in the slot, redraw it
+	local function OnToolDataChanged(): ()
+		AssignToolData()
+		notifyDecorator(slot, IsEquipped(slot.Tool) == true)
 	end
 
 	-- Adjust the slots to the centered
@@ -415,28 +507,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 
 		self.Tool = tool :: Tool
 
-		-- Update the slot with tool data
-		local function assignToolData(): ()
-			local icon: string = tool:GetAttribute("TextureId") or ""
-			ToolIcon.Image = icon
-
-			if icon ~= "" then
-				-- Enable the tool name on the slot if there is no icon
-				ToolName.Visible = false
-			else
-				ToolName.Visible = true
-			end
-
-			ToolName.Text = tool:GetAttribute("Title") or tool:GetAttribute("ToolName") or tool.Name
-
-			-- If there is a tooltip, then show it
-			if ToolTip and tool:IsA("Tool") then --NOTE: HopperBin
-				ToolTip.Text = tool.ToolTip
-				ToolTip.Size = UDim2.fromOffset(0, TOOLTIP_HEIGHT)
-				ToolTip.Position = UDim2.new(0.5, 0, 0, TOOLTIP_OFFSET)
-			end
-		end
-		assignToolData()
+		AssignToolData() -- The decorator is notified by UpdateEquipView below
 
 		-- Disconnect tool event if it exists
 		if ToolChangeConn then
@@ -447,7 +518,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 		-- Update the slot with new tool data if the tool's properties changes
 		ToolChangeConn = tool.Changed:Connect(function(property: string): ()
 			if property == "Name" then
-				assignToolData()
+				OnToolDataChanged()
 			end
 		end)
 
@@ -459,7 +530,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 		-- Update the slot with new tool data if the tool's properties changes
 		ToolAttribChangeConn = tool.AttributeChanged:Connect(function(property: string): ()
 			if property == "TextureId" or property == "ToolTip" or property == "Title" then
-				assignToolData()
+				OnToolDataChanged()
 			end
 		end)
 
@@ -535,8 +606,11 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 
 	function slot:UpdateEquipView(unequippedOverride: boolean?): ...any
 		local override = unequippedOverride or false
-		if not override and IsEquipped(self.Tool) then -- Equipped
+		local isEquipped: boolean = not override and IsEquipped(self.Tool) == true
+		if isEquipped then -- Equipped
 			lastEquippedSlot = slot
+		end
+		if isEquipped and not slotDecorator then -- Draw the equip border, unless a decorator owns the visuals
 			if not HighlightFrame then
 				HighlightFrame = Instance.new("UIStroke")
 				HighlightFrame.Name = "Border"
@@ -555,6 +629,18 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 			end
 		end
 		UpdateSlotFading()
+		notifyDecorator(self, isEquipped)
+	end
+
+	-- Redraw the slot from scratch, used when the slot decorator changes
+	function slot:RefreshVisuals(): ...any
+		if self.Tool then
+			AssignToolData()
+		else
+			ToolIcon.Visible = not slotDecorator
+			ToolName.Visible = not slotDecorator
+		end
+		self:UpdateEquipView()
 	end
 
 	function slot:IsEquipped(): boolean
@@ -562,6 +648,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 	end
 
 	function slot:Delete(): ...any
+		runDecoratorCleanup(self)
 		SlotFrame:Destroy() --NOTE: Also clears connections
 		table.remove(Slots, self.Index)
 		local newSize: number = #Slots
@@ -653,7 +740,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 	SlotFrame.Size = UDim2.fromOffset(ICON_SIZE_PIXELS, ICON_SIZE_PIXELS)
 	SlotFrame.Active = true
 	SlotFrame.Draggable = false
-	SlotFrame.BackgroundTransparency = SLOT_LOCKED_TRANSPARENCY
+	SlotFrame.BackgroundTransparency = if slotDecorator then 1 else SLOT_LOCKED_TRANSPARENCY
 	SlotFrame.MouseButton1Click:Connect(function(): ()
 		changeSlot(slot)
 	end)
@@ -2200,6 +2287,22 @@ function BackpackScript:EquipTool(tool: Tool): ()
 	end
 end
 
+-- Hand slot visuals to game code. The decorator is called whenever a slot's visual state may have changed and must
+-- not yield. It may return a cleanup, called before the next decorate call on that slot or when the slot is destroyed.
+-- While a decorator is set, Satchel stops drawing the slot background, equip border, icon and name. Pass nil to restore
+-- the default visuals.
+function BackpackScript:SetSlotDecorator(decorator: SlotDecorator?): ()
+	for _, slot in ipairs(Slots) do
+		runDecoratorCleanup(slot)
+	end
+
+	slotDecorator = decorator
+
+	for _, slot in ipairs(Slots) do
+		slot:RefreshVisuals()
+	end
+end
+
 -- Update every heartbeat the icon state
 RunService.Heartbeat:Connect(function(): ()
 	OnIconChanged(BackpackEnabled)
@@ -2214,7 +2317,7 @@ local function OnPreferredTransparencyChanged(): ()
 
 	SLOT_LOCKED_TRANSPARENCY = SLOT_LOCKED_TRANSPARENCY_DEFAULT * preferredTransparency
 	for _, slot in ipairs(Slots) do
-		slot.Frame.BackgroundTransparency = SLOT_LOCKED_TRANSPARENCY
+		slot.Frame.BackgroundTransparency = if slotDecorator then 1 else SLOT_LOCKED_TRANSPARENCY
 	end
 
 	SEARCH_BACKGROUND_TRANSPARENCY = SEARCH_BACKGROUND_TRANSPARENCY_DEFAULT * preferredTransparency
