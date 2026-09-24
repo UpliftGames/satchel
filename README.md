@@ -31,6 +31,43 @@ See the [documentation site](https://satchel.luau.page) for more about Satchel. 
 
 If you see anything wrong, open a new [documentation issue](https://github.com/ryanlua/satchel/issues/new?template=documentation_issue.yml).
 
+## Slot decorator (upliftgames fork)
+
+`Satchel:SetSlotDecorator(decorator)` lets game code draw the hotbar and inventory slots. Satchel still owns the slot logic: filling and clearing, dragging and reordering, hotkeys, gamepad selection and search.
+
+```luau
+export type SlotState = {
+	frame: TextButton, -- the slot's frame, mount your visuals in here
+	tool: Tool?, -- nil when the slot is empty
+	isEquipped: boolean,
+	index: number,
+	isHotbar: boolean,
+}
+
+Satchel:SetSlotDecorator(decorator: ((state: SlotState) -> (() -> ())?)?)
+```
+
+- Satchel calls the decorator whenever a slot's visual state may have changed: equip, unequip, a tool being added or removed, drag/swap/reorder, moving between hotbar and inventory, and changes to the tool's `Name` or its `TextureId`/`Title`/`ToolTip` attributes.
+- Calls are keyed to the slot frame, not the tool. Tools move between frames, so redraw from `state` every time and don't cache anything per tool.
+- The decorator must not yield. If it errors, Satchel `warn`s with a traceback and the backpack keeps working.
+- The decorator can return a cleanup function. Satchel calls it before the next decorate call on the same slot, when the slot frame is destroyed, and when the decorator is replaced.
+- While a decorator is set, Satchel hides its own slot background, equip border, tool icon and tool name. The slot number, tooltip, gamepad selection and drag border are still drawn by Satchel.
+- Calling `SetSlotDecorator(fn)` decorates every existing slot right away. `SetSlotDecorator(nil)` puts the default visuals back.
+
+```luau
+Satchel:SetSlotDecorator(function(state)
+	local backing = Instance.new("ImageLabel")
+	backing.Size = UDim2.fromScale(1, 1)
+	backing.BackgroundTransparency = 1
+	backing.Image = if state.isEquipped then EQUIPPED_BACKING else BACKING
+	backing.Parent = state.frame
+
+	return function()
+		backing:Destroy()
+	end
+end)
+```
+
 ## Sponsors
 
 Special thanks for our sponsors for supporting Satchel and it's future development. We distribute Satchel and provide updates for free, for anyone to use or modify.
