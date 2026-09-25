@@ -68,6 +68,28 @@ Satchel:SetSlotDecorator(function(state)
 end)
 ```
 
+## Icon size (upliftgames fork)
+
+`Satchel:SetIconSize(pixels, bufferPixels)` sets the size of the hotbar and inventory slots in pixels.
+
+```luau
+Satchel:SetIconSize(pixels: number?, bufferPixels: number?)
+Satchel:GetIconSize(): (number, number) -- the size and gap in use
+```
+
+- `pixels` is the slot's width and height. `nil` restores the default: 60, or 100 on ten-foot interfaces (console).
+- `bufferPixels` is the gap between slots and around the hotbar. By default it scales with the size, from 5px at the default size. For example, 80 gets a 7px gap. Pass a number to fix the gap instead.
+- Values are rounded to whole pixels. `pixels` must be at least 1 and `bufferPixels` at least 0. Anything else, including `NaN` and infinity, raises an error.
+- The change takes effect straight away, including while the inventory is open. Existing slots are resized and repositioned, and the inventory is laid out again above the hotbar.
+- Fitting to the screen: a custom size is reduced, if needed, so the hotbar fits the screen width and the hotbar plus the open inventory fit below the topbar. The hotbar has 10 slots on desktop and 6 on phones. It is re-fitted when the screen changes size, such as a phone rotating. For example, on an 852×393 phone, 80 fits and 100 becomes 84. Use `GetIconSize` to read the size that is actually in use. The default size is never fitted, so it behaves as in 1.7.1.
+- The slot decorator is called again after a resize. Size decorator visuals with `Scale`, such as `UDim2.fromScale(1, 1)`, so they fill the slot at any size.
+
+```luau
+Satchel:SetIconSize(80) -- bigger slots with a 7px gap
+Satchel:SetIconSize(80, 10) -- bigger slots with a 10px gap
+Satchel:SetIconSize(nil) -- back to the default
+```
+
 ## Sponsors
 
 Special thanks for our sponsors for supporting Satchel and it's future development. We distribute Satchel and provide updates for free, for anyone to use or modify.

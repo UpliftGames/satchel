@@ -174,6 +174,13 @@ if IsTenFootInterface then
 	FONT_SIZE = 24
 end
 
+-- Icon size (upliftgames fork). ICON_SIZE_PIXELS and ICON_BUFFER_PIXELS hold the effective values, see SetIconSize
+local DEFAULT_ICON_SIZE_PIXELS: number = ICON_SIZE_PIXELS
+local DEFAULT_ICON_BUFFER_PIXELS: number = ICON_BUFFER_PIXELS
+local RequestedIconSize: number? = nil -- nil uses the default
+local RequestedIconBuffer: number? = nil -- nil scales the default buffer with the icon size
+local IconSizeGeneration: number = 0 -- Bumped every time the effective size changes
+
 local GamepadActionsBound: boolean = false
 
 local IS_PHONE: boolean = UserInputService.TouchEnabled
@@ -287,7 +294,7 @@ local function AdjustInventoryFrames(): ()
 	UpdateScrollingFrameCanvasSize()
 end
 
-local function UpdateBackpackLayout(): ()
+local function LayoutBackpackFrames(): ()
 	HotbarFrame.Size = UDim2.new(
 		0,
 		ICON_BUFFER_PIXELS + (NumberOfHotbarSlots * (ICON_SIZE_PIXELS + ICON_BUFFER_PIXELS)),
@@ -317,6 +324,10 @@ local function UpdateBackpackLayout(): ()
 		-INVENTORY_HEADER_SIZE - (IsVR and 2 * INVENTORY_ARROWS_BUFFER_VR or 0)
 	)
 	ScrollingFrame.Position = UDim2.fromOffset(0, INVENTORY_HEADER_SIZE + (IsVR and INVENTORY_ARROWS_BUFFER_VR or 0))
+end
+
+local function UpdateBackpackLayout(): ()
+	LayoutBackpackFrames()
 	AdjustHotbarFrames()
 	AdjustInventoryFrames()
 end
@@ -643,6 +654,15 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 		self:UpdateEquipView()
 	end
 
+	-- Resize the slot to the current icon size, used by SetIconSize. Hotbar positions are set by Readjust
+	function slot:ApplyIconSize(): ...any
+		SlotFrame.Size = UDim2.fromOffset(ICON_SIZE_PIXELS, ICON_SIZE_PIXELS)
+		if FakeSlotFrame and FakeSlotFrame.Parent then -- Mid-drag placeholder in the inventory grid
+			FakeSlotFrame.Size = SlotFrame.Size
+		end
+		notifyDecorator(self, IsEquipped(self.Tool) == true)
+	end
+
 	function slot:IsEquipped(): boolean
 		return IsEquipped(self.Tool)
 	end
@@ -889,10 +909,12 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 		local startPoint: UDim2 = SlotFrame.Position
 		local lastUpTime: number = 0
 		local startParent: any = nil
+		local startGeneration: number = IconSizeGeneration
 
 		SlotFrame.DragBegin:Connect(function(dragPoint: UDim2): ()
 			Dragging[SlotFrame] = true
 			startPoint = dragPoint
+			startGeneration = IconSizeGeneration
 
 			SlotFrame.BorderSizePixel = 2
 			inventoryIcon:lock()
@@ -942,6 +964,9 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 
 			SlotFrame.Position = startPoint
 			SlotFrame.Parent = startParent
+			if startGeneration ~= IconSizeGeneration and startParent == HotbarFrame then
+				AdjustHotbarFrames() -- The icon size changed mid-drag, so startPoint is stale
+			end
 
 			SlotFrame.BorderSizePixel = 0
 			inventoryIcon:unlock()
@@ -1482,6 +1507,8 @@ function changeSlot(slot: any): ()
 		else
 			local startSize: UDim2 = slot.Frame.Size
 			local startPosition: UDim2 = slot.Frame.Position
+			local startGeneration: number = IconSizeGeneration
+			slot.Pulsing = true -- Lets SetIconSize cancel the pulse
 			slot.Frame:TweenSizeAndPosition(
 				startSize + UDim2.fromOffset(10, 10),
 				startPosition - UDim2.fromOffset(5, 5),
@@ -1490,13 +1517,21 @@ function changeSlot(slot: any): ()
 				0.1,
 				true,
 				function(): ()
+					if startGeneration ~= IconSizeGeneration then
+						return -- SetIconSize resized the slot mid-pulse, startSize and startPosition are stale
+					end
 					slot.Frame:TweenSizeAndPosition(
 						startSize,
 						startPosition,
 						Enum.EasingDirection.In,
 						Enum.EasingStyle.Quad,
 						0.1,
-						true
+						true,
+						function(status: Enum.TweenStatus): ()
+							if status == Enum.TweenStatus.Completed then
+								slot.Pulsing = nil
+							end
+						end
 					)
 				end
 			)
@@ -2247,6 +2282,149 @@ do -- Hotkey stuff
 			gamepadDisconnected()
 		end
 	end)
+end
+
+do -- Icon size (upliftgames fork)
+	local function getViewportSize(): Vector2
+		local size: Vector2 = BackpackGui.AbsoluteSize -- IgnoreGuiInset, so this is the whole screen
+		if size.X > 0 and size.Y > 0 then
+			return size
+		end
+		local camera: Camera? = workspace.CurrentCamera
+		return if camera then camera.ViewportSize else Vector2.zero
+	end
+
+	-- The gap between slots. Scales with the icon size so 1.7.1's 5px at the default size stays 5px
+	local function bufferForIconSize(iconSize: number): number
+		if RequestedIconBuffer then
+			return RequestedIconBuffer
+		end
+		return math.floor(DEFAULT_ICON_BUFFER_PIXELS * iconSize / DEFAULT_ICON_SIZE_PIXELS + 0.5)
+	end
+
+	-- The hotbar must fit the screen width, and the hotbar plus the open inventory must fit below the topbar
+	local function fitsViewport(iconSize: number, viewport: Vector2, topInset: number): boolean
+		local buffer: number = bufferForIconSize(iconSize)
+		local hotbarWidth: number = buffer + (NumberOfHotbarSlots * (iconSize + buffer))
+		local hotbarHeight: number = buffer + iconSize + buffer
+		local stackHeight: number = (hotbarHeight * (NumberOfInventoryRows + 1))
+			+ INVENTORY_HEADER_SIZE
+			+ (IsVR and 2 * INVENTORY_ARROWS_BUFFER_VR or 0)
+		return hotbarWidth <= viewport.X and stackHeight <= viewport.Y - topInset
+	end
+
+	local function resolveIconSize(): (number, number)
+		if not RequestedIconSize and not RequestedIconBuffer then
+			return DEFAULT_ICON_SIZE_PIXELS, DEFAULT_ICON_BUFFER_PIXELS -- Never capped, identical to 1.7.1
+		end
+
+		local iconSize: number = RequestedIconSize or DEFAULT_ICON_SIZE_PIXELS
+		local viewport: Vector2 = getViewportSize()
+		local topInset: number = GuiService:GetGuiInset().Y
+		if viewport.X > 0 and viewport.Y > 0 and not fitsViewport(iconSize, viewport, topInset) then
+			-- Largest size that fits. The fit is monotonic since the buffer never shrinks as the icon grows
+			local low: number, high: number = 1, iconSize - 1
+			while low < high do
+				local mid: number = math.ceil((low + high) / 2)
+				if fitsViewport(mid, viewport, topInset) then
+					low = mid
+				else
+					high = mid - 1
+				end
+			end
+			iconSize = low
+		end
+		return iconSize, bufferForIconSize(iconSize)
+	end
+
+	local function applyIconSize(): ()
+		local iconSize: number, buffer: number = resolveIconSize()
+		if iconSize == ICON_SIZE_PIXELS and buffer == ICON_BUFFER_PIXELS then
+			return
+		end
+
+		ICON_SIZE_PIXELS = iconSize
+		ICON_BUFFER_PIXELS = buffer
+		IconSizeGeneration = IconSizeGeneration + 1
+
+		UIGridFrame.Size = UDim2.new(1, -(ICON_BUFFER_PIXELS * 2), 1, 0)
+		UIGridFrame.Position = UDim2.fromOffset(ICON_BUFFER_PIXELS, 0)
+		UIGridLayout.CellSize = UDim2.fromOffset(ICON_SIZE_PIXELS, ICON_SIZE_PIXELS)
+		UIGridLayout.CellPadding = UDim2.fromOffset(ICON_BUFFER_PIXELS, ICON_BUFFER_PIXELS)
+
+		for _, slot in ipairs(Slots) do
+			slot:ApplyIconSize()
+		end
+
+		-- Not UpdateBackpackLayout, its AdjustInventoryFrames would undo the visibility and order of search results
+		LayoutBackpackFrames()
+		AdjustHotbarFrames()
+		UpdateScrollingFrameCanvasSize()
+
+		if gamepadHintsFrame.Visible then
+			resizeGamepadHintsFrame()
+		end
+
+		-- Cancel any gamepad select pulse, it would tween back to the old size
+		for _, slot in ipairs(Slots) do
+			if slot.Pulsing then
+				slot.Pulsing = nil
+				slot.Frame:TweenSizeAndPosition(
+					slot.Frame.Size,
+					slot.Frame.Position,
+					Enum.EasingDirection.Out,
+					Enum.EasingStyle.Quad,
+					0,
+					true
+				)
+			end
+		end
+	end
+
+	-- Re-fit when the screen changes, e.g. a phone rotating or the Studio window resizing
+	BackpackGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function(): ()
+		if RequestedIconSize or RequestedIconBuffer then
+			applyIconSize()
+		end
+	end)
+
+	-- The canvas row count reads ScrollingFrame.AbsoluteSize, which may only settle after a resize is laid out
+	ScrollingFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function(): ()
+		if IconSizeGeneration > 0 then
+			UpdateScrollingFrameCanvasSize()
+		end
+	end)
+
+	local function toWholePixels(value: any, name: string, minimum: number): number
+		if type(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge then
+			error("[Satchel] SetIconSize: " .. name .. " must be a finite number, got " .. tostring(value), 3)
+		end
+		local rounded: number = math.floor(value + 0.5)
+		if rounded < minimum then
+			error(
+				"[Satchel] SetIconSize: " .. name .. " must be at least " .. minimum .. ", got " .. tostring(value),
+				3
+			)
+		end
+		return rounded
+	end
+
+	-- Sets the slot size in pixels for the hotbar and inventory. Pass nil to restore the default (60, or 100 on ten-foot
+	-- interfaces). The gap between slots scales with the size unless bufferPixels is given. Values are rounded to whole
+	-- pixels. If the hotbar would not fit the screen, the size is reduced until it does.
+	function BackpackScript:SetIconSize(pixels: number?, bufferPixels: number?): ()
+		local iconSize: number? = if pixels == nil then nil else toWholePixels(pixels, "pixels", 1)
+		local buffer: number? = if bufferPixels == nil then nil else toWholePixels(bufferPixels, "bufferPixels", 0)
+
+		RequestedIconSize = iconSize
+		RequestedIconBuffer = buffer
+		applyIconSize()
+	end
+
+	-- Returns the slot size and gap in pixels currently in use, after any capping to fit the screen
+	function BackpackScript:GetIconSize(): (number, number)
+		return ICON_SIZE_PIXELS, ICON_BUFFER_PIXELS
+	end
 end
 
 -- Sets whether the backpack is enabled or not

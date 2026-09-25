@@ -2,6 +2,20 @@
 
 Changes to the `upliftgames/satchel` fork.
 
+## 1.8.0
+
+### Added
+
+- `Satchel:SetIconSize(pixels, bufferPixels)` sets the slot size of the hotbar and inventory at runtime, including while the inventory is open. `nil` restores the default (60, or 100 on ten-foot interfaces). The gap between slots scales with the size unless `bufferPixels` is given. See [Icon size](README.md#icon-size-upliftgames-fork).
+- If a custom size would make the hotbar wider than the screen, or the hotbar and open inventory taller than the space below the topbar, the size is reduced until it fits. It is re-fitted when the screen size changes.
+- `Satchel:GetIconSize()` returns the slot size and gap in use, after any fitting.
+- Dragging, drop targets, hotkeys, gamepad selection, search and the slot decorator keep working after a resize. A resize in the middle of a drag or a gamepad select pulse doesn't leave the slot at its old size or position. The decorator is called again for every slot after a resize.
+
+### Unchanged
+
+- If `SetIconSize` is never called, the backpack is laid out exactly as in 1.7.1 on every platform. The default size is not fitted to the screen.
+- The gamepad hints bar keeps its fixed height (60, or 95 on ten-foot interfaces). It sizes to its hint icons and text, not the slots. Its width still follows the hotbar.
+
 ## 1.7.1
 
 ### Fixed
